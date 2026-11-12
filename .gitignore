@@ -11,8 +11,11 @@ coverage.out
 coverage.html
 go.work
 go.work.sum
-vendor/
+/backend/vendor/
 .idea/
 .vscode/
 *.swp
 .DS_Store
+
+/frontend/node_modules/
+/.deployed-revision

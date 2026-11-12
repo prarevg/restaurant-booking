@@ -1,0 +1,38 @@
+workflow:
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" && ($CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "web")'
+
+stages:
+  - deploy
+
+deploy:
+  stage: deploy
+  image: alpine:3.22
+  resource_group: restaurant-booking-vm
+  interruptible: false
+  timeout: 30 minutes
+  variables:
+    GIT_STRATEGY: none
+  before_script:
+    - apk add --no-cache openssh-client
+    - chmod 600 "$SSH_PRIVATE_KEY"
+  script:
+    - |
+      ssh -i "$SSH_PRIVATE_KEY" -o IdentitiesOnly=yes -o BatchMode=yes \
+        -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$SSH_KNOWN_HOSTS" \
+        -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+        "$VM_USER@$VM_HOST" bash -se -- "$CI_COMMIT_SHA" <<'DEPLOY'
+      set -eu
+      cd /opt/restaurant-booking
+      git fetch gitlab main
+      if [ "$(git rev-parse FETCH_HEAD)" != "$1" ]; then
+        printf 'Пропуск: коммит %s больше не является вершиной main.\n' "$1"
+        exit 0
+      fi
+      git checkout --detach "$1"
+      if [ ! -f backend/.env ]; then
+        install -m 600 .env backend/.env
+      fi
+      COMPOSE_PARALLEL_LIMIT=1 docker compose --env-file backend/.env -f backend/deploy/docker-compose.dev.yml up -d --build --wait --wait-timeout 300
+      printf '%s\n' "$1" > .deployed-revision
+      DEPLOY
