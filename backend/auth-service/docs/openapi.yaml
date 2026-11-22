@@ -2,121 +2,252 @@ openapi: 3.0.3
 info:
   title: Auth Service API
   version: 1.0.0
-
+  description: Регистрация, JWT и профиль. /service и /ready доступны только через прямой адрес сервиса.
 servers:
-  - url: /
-
+- url: /
 tags:
-  - name: auth
-    description: Публичные эндпоинты аутентификации
-  - name: service
-    description: Межсервисное взаимодействие
-
+- name: auth
+  description: Публичные эндпоинты аутентификации
+- name: service
+  description: Межсервисное взаимодействие
 paths:
   /api/auth/register:
     post:
-      tags: [auth]
+      tags:
+      - auth
       summary: Регистрация пользователя
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/RegisterRequest' }
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
       responses:
         '201':
           description: Created
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/AuthResponse' }
-        '400': { description: Invalid input }
-        '409': { description: Email already exists }
-
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          description: Invalid input
+          content:
+            text/plain:
+              schema:
+                type: string
+        '409':
+          description: Email already exists
+          content:
+            text/plain:
+              schema:
+                type: string
+        '500':
+          description: Внутренняя ошибка
+          content:
+            text/plain:
+              schema:
+                type: string
+      operationId: auth_post_api_auth_register
   /api/auth/login:
     post:
-      tags: [auth]
+      tags:
+      - auth
       summary: Вход в систему
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/LoginRequest' }
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
       responses:
         '200':
           description: OK
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/AuthResponse' }
-        '400': { description: Invalid input }
-        '401': { description: Unauthorized }
-
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          description: Invalid input
+          content:
+            text/plain:
+              schema:
+                type: string
+        '401':
+          description: Unauthorized
+          content:
+            text/plain:
+              schema:
+                type: string
+        '500':
+          description: Внутренняя ошибка
+          content:
+            text/plain:
+              schema:
+                type: string
+      operationId: auth_post_api_auth_login
   /api/auth/me:
     get:
-      tags: [auth]
+      tags:
+      - auth
       summary: Текущий пользователь
-      security: [{ bearerAuth: [] }]
+      security:
+      - bearerAuth: []
       responses:
         '200':
           description: OK
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/User' }
-        '401': { description: Unauthorized }
-
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          description: Требуется действующий Bearer JWT
+          content:
+            text/plain:
+              schema:
+                type: string
+        '500':
+          description: Внутренняя ошибка
+          content:
+            text/plain:
+              schema:
+                type: string
+      operationId: auth_get_api_auth_me
   /service/users/{id}:
     get:
-      tags: [service]
+      tags:
+      - service
       summary: Получить пользователя по id
       parameters:
-        - in: path
-          name: id
-          required: true
-          schema: { type: string, format: uuid }
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
       responses:
         '200':
           description: OK
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/User' }
-        '404': { description: Not found }
-
+              schema:
+                $ref: '#/components/schemas/User'
+        '404':
+          description: Not found
+          content:
+            text/plain:
+              schema:
+                type: string
+        '400':
+          description: Некорректный UUID
+          content:
+            text/plain:
+              schema:
+                type: string
+        '500':
+          description: Внутренняя ошибка
+          content:
+            text/plain:
+              schema:
+                type: string
+      operationId: auth_get_service_users_id
+  /ready:
+    get:
+      summary: Готовность сервиса и доступность PostgreSQL
+      tags:
+      - health
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - status
+                properties:
+                  status:
+                    type: string
+                    enum:
+                    - ready
+                additionalProperties: false
+        '503':
+          description: database unavailable
+          content:
+            text/plain:
+              schema:
+                type: string
+      description: Проверяет соединение с БД. Доступность RabbitMQ и активность потребителя не проверяются. Публичный
+        nginx этот путь не обслуживает.
+      operationId: auth_get_ready
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
-
   schemas:
     RegisterRequest:
       type: object
-      required: [email, password, full_name]
+      required:
+      - email
+      - password
+      - full_name
       properties:
-        email: { type: string, format: email }
-        password: { type: string, minLength: 8 }
-        full_name: { type: string }
-        phone: { type: string }
-
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 1
+        full_name:
+          type: string
+        phone:
+          type: string
     LoginRequest:
       type: object
-      required: [email, password]
+      required:
+      - email
+      - password
       properties:
-        email: { type: string, format: email }
-        password: { type: string }
-
+        email:
+          type: string
+          format: email
+        password:
+          type: string
     AuthResponse:
       type: object
-      required: [token, user]
+      required:
+      - token
+      - user
       properties:
-        token: { type: string }
-        user: { $ref: '#/components/schemas/User' }
-
+        token:
+          type: string
+        user:
+          $ref: '#/components/schemas/User'
     User:
       type: object
-      required: [id, email, full_name, created_at, updated_at]
+      required:
+      - id
+      - email
+      - full_name
+      - phone
+      - created_at
+      - updated_at
       properties:
-        id: { type: string, format: uuid }
-        email: { type: string, format: email }
-        full_name: { type: string }
-        phone: { type: string, nullable: true }
-        created_at: { type: string, format: date-time }
-        updated_at: { type: string, format: date-time }
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        full_name:
+          type: string
+        phone:
+          type: string
+          description: Пустая строка, если телефон не указан.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time

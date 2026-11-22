@@ -2,9 +2,11 @@ openapi: 3.0.3
 info:
   title: Booking Service API
   version: 1.0.0
+  description: Бронирование и доступность. Все /api требуют JWT. Время RFC 3339, начало и конец в одном дне UTC.
+    Смежные интервалы разрешены.
 servers:
-  - url: /
-    description: Local
+- url: /
+  description: Local
 components:
   securitySchemes:
     bearerAuth:
@@ -12,11 +14,6 @@ components:
       scheme: bearer
       bearerFormat: JWT
   schemas:
-    Error:
-      type: object
-      properties:
-        message:
-          type: string
     Booking:
       type: object
       properties:
@@ -34,6 +31,7 @@ components:
           format: uuid
         guests_count:
           type: integer
+          minimum: 1
         start_time:
           type: string
           format: date-time
@@ -42,16 +40,36 @@ components:
           format: date-time
         status:
           type: string
-          enum: [pending, confirmed, cancelled, completed]
+          enum:
+          - pending
+          - confirmed
+          - cancelled
+          - completed
         created_at:
           type: string
           format: date-time
         updated_at:
           type: string
           format: date-time
+      required:
+      - id
+      - user_id
+      - restaurant_id
+      - table_id
+      - guests_count
+      - start_time
+      - end_time
+      - status
+      - created_at
+      - updated_at
     BookingCreateRequest:
       type: object
-      required: [restaurant_id, table_id, start_time, end_time, guests_count]
+      required:
+      - restaurant_id
+      - table_id
+      - start_time
+      - end_time
+      - guests_count
       properties:
         restaurant_id:
           type: string
@@ -67,42 +85,46 @@ components:
           format: date-time
         guests_count:
           type: integer
+          minimum: 1
     AvailabilityResponse:
       type: object
+      required:
+      - Available
       properties:
-        available:
+        Available:
           type: boolean
+      additionalProperties: false
 paths:
   /api/restaurants/{id}/tables/{tableID}/availability:
     get:
       summary: Check table availability
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - in: path
-          name: id
-          required: true
-          schema:
-            type: string
-            format: uuid
-        - in: path
-          name: tableID
-          required: true
-          schema:
-            type: string
-            format: uuid
-        - in: query
-          name: start_time
-          required: true
-          schema:
-            type: string
-            format: date-time
-        - in: query
-          name: end_time
-          required: true
-          schema:
-            type: string
-            format: date-time
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - in: path
+        name: tableID
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - in: query
+        name: start_time
+        required: true
+        schema:
+          type: string
+          format: date-time
+      - in: query
+        name: end_time
+        required: true
+        schema:
+          type: string
+          format: date-time
       responses:
         '200':
           description: Availability info
@@ -111,20 +133,35 @@ paths:
               schema:
                 $ref: '#/components/schemas/AvailabilityResponse'
         '401':
-          description: Unauthorized
+          description: Требуется действующий Bearer JWT
+          content:
+            text/plain:
+              schema:
+                type: string
         '400':
           description: Invalid input
           content:
-            application/json:
+            text/plain:
               schema:
-                $ref: '#/components/schemas/Error'
+                type: string
         '404':
           description: Restaurant or table not found
+          content:
+            text/plain:
+              schema:
+                type: string
+        '500':
+          description: Внутренняя ошибка
+          content:
+            text/plain:
+              schema:
+                type: string
+      operationId: booking_get_api_restaurants_id_tables_tableID_availability
   /api/bookings:
     post:
       summary: Create a booking
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -133,82 +170,196 @@ paths:
               $ref: '#/components/schemas/BookingCreateRequest'
       responses:
         '201':
-          description: Booking created
+          description: Бронь подтверждена
           content:
             application/json:
               schema:
                 type: object
+                required:
+                - Booking
                 properties:
-                  booking:
+                  Booking:
                     $ref: '#/components/schemas/Booking'
+                additionalProperties: false
         '400':
           description: Invalid input
+          content:
+            text/plain:
+              schema:
+                type: string
         '401':
-          description: Unauthorized
+          description: Требуется действующий Bearer JWT
+          content:
+            text/plain:
+              schema:
+                type: string
         '409':
-          description: Table not available
+          description: Интервал занят или гостей больше, чем мест
+          content:
+            text/plain:
+              schema:
+                type: string
         '404':
           description: Restaurant or table not found
+          content:
+            text/plain:
+              schema:
+                type: string
+        '500':
+          description: Внутренняя ошибка
+          content:
+            text/plain:
+              schema:
+                type: string
+      operationId: booking_post_api_bookings
   /api/me/bookings:
     get:
       summary: List current user's bookings
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       responses:
         '200':
-          description: List of bookings
+          description: OK
           content:
             application/json:
               schema:
                 type: object
+                required:
+                - Bookings
                 properties:
-                  bookings:
+                  Bookings:
                     type: array
                     items:
                       $ref: '#/components/schemas/Booking'
+                additionalProperties: false
         '401':
-          description: Unauthorized
+          description: Требуется действующий Bearer JWT
+          content:
+            text/plain:
+              schema:
+                type: string
+        '500':
+          description: Внутренняя ошибка
+          content:
+            text/plain:
+              schema:
+                type: string
+      operationId: booking_get_api_me_bookings
   /api/me/bookings/{bookingID}:
     get:
       summary: Get current user's booking
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - in: path
-          name: bookingID
-          required: true
-          schema:
-            type: string
-            format: uuid
+      - in: path
+        name: bookingID
+        required: true
+        schema:
+          type: string
+          format: uuid
       responses:
         '200':
-          description: Booking
+          description: OK
           content:
             application/json:
               schema:
                 type: object
+                required:
+                - Booking
                 properties:
-                  booking:
+                  Booking:
                     $ref: '#/components/schemas/Booking'
+                additionalProperties: false
         '401':
-          description: Unauthorized
+          description: Требуется действующий Bearer JWT
+          content:
+            text/plain:
+              schema:
+                type: string
         '404':
           description: Not found
+          content:
+            text/plain:
+              schema:
+                type: string
+        '400':
+          description: Некорректные входные данные
+          content:
+            text/plain:
+              schema:
+                type: string
+        '500':
+          description: Внутренняя ошибка
+          content:
+            text/plain:
+              schema:
+                type: string
+      operationId: booking_get_api_me_bookings_bookingID
     delete:
       summary: Cancel current user's booking
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       parameters:
-        - in: path
-          name: bookingID
-          required: true
-          schema:
-            type: string
-            format: uuid
+      - in: path
+        name: bookingID
+        required: true
+        schema:
+          type: string
+          format: uuid
       responses:
         '204':
           description: Cancelled
         '401':
-          description: Unauthorized
+          description: Требуется действующий Bearer JWT
+          content:
+            text/plain:
+              schema:
+                type: string
         '404':
           description: Not found
+          content:
+            text/plain:
+              schema:
+                type: string
+        '400':
+          description: Некорректные входные данные
+          content:
+            text/plain:
+              schema:
+                type: string
+        '500':
+          description: Внутренняя ошибка
+          content:
+            text/plain:
+              schema:
+                type: string
+      operationId: booking_delete_api_me_bookings_bookingID
+  /ready:
+    get:
+      summary: Готовность сервиса и доступность PostgreSQL
+      tags:
+      - health
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - status
+                properties:
+                  status:
+                    type: string
+                    enum:
+                    - ready
+                additionalProperties: false
+        '503':
+          description: database unavailable
+          content:
+            text/plain:
+              schema:
+                type: string
+      description: Проверяет соединение с БД. Доступность RabbitMQ и активность потребителя не проверяются. Публичный
+        nginx этот путь не обслуживает.
+      operationId: booking_get_ready
