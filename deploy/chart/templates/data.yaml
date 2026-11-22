@@ -1,0 +1,120 @@
+{{- $node := required "Set node to the Kubernetes node hostname" .Values.node }}
+{{- range $name, $db := dict "auth-db" "auth_db" "catalog-db" "catalog_db" "booking-db" "booking_db" "rabbitmq" "" }}
+{{- $rabbit := eq $name "rabbitmq" }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ $.Release.Namespace }}-{{ $name }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  capacity:
+    storage: 4Gi
+  accessModes: [ReadWriteOnce]
+  storageClassName: ""
+  persistentVolumeReclaimPolicy: Retain
+  claimRef:
+    namespace: {{ $.Release.Namespace }}
+    name: {{ $name }}
+  local:
+    path: {{ printf "%s/%s" $.Values.dataPath $name | quote }}
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values: [{{ $node | quote }}]
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $name }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: ""
+  volumeName: {{ $.Release.Namespace }}-{{ $name }}
+  resources:
+    requests:
+      storage: 4Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+spec:
+  clusterIP: None
+  selector:
+    app: {{ $name }}
+  ports:
+    - name: {{ ternary "amqp" "postgres" $rabbit }}
+      port: {{ ternary 5672 5432 $rabbit }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+spec:
+  serviceName: {{ $name }}
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ $name }}
+  template:
+    metadata:
+      labels:
+        app: {{ $name }}
+    spec:
+      containers:
+        - name: {{ $name }}
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: {{ ternary "1Gi" "512Mi" $rabbit }}
+          {{- if $rabbit }}
+          image: rabbitmq:4.3.1-management@sha256:8734b9e9cd03d12b2e1d973415fc4c5c941c5eca351b4bd63f721782b1bf7c8b
+          env:
+            - name: RABBITMQ_NODENAME
+              value: rabbit@rabbitmq-0
+            - name: RABBITMQ_DEFAULT_USER
+              valueFrom:
+                secretKeyRef: {name: storage-credentials, key: RABBITMQ_DEFAULT_USER}
+            - name: RABBITMQ_DEFAULT_PASS
+              valueFrom:
+                secretKeyRef: {name: storage-credentials, key: RABBITMQ_DEFAULT_PASS}
+          readinessProbe:
+            exec:
+              command: [rabbitmq-diagnostics, -q, check_port_connectivity]
+            timeoutSeconds: 5
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/rabbitmq
+          {{- else }}
+          image: postgres:16-alpine
+          env:
+            - name: POSTGRES_DB
+              value: {{ $db }}
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef: {name: storage-credentials, key: POSTGRES_USER}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: storage-credentials, key: POSTGRES_PASSWORD}
+          readinessProbe:
+            exec:
+              command: [sh, -c, 'pg_isready -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"']
+            timeoutSeconds: 3
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          {{- end }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ $name }}
+{{- end }}

@@ -1,0 +1,37 @@
+{{- if and .Values.applicationEnabled .Values.backups.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: database-backup
+spec:
+  schedule: {{ .Values.backups.schedule | quote }}
+  timeZone: Europe/Moscow
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 600
+      template:
+        spec:
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          imagePullSecrets:
+            - name: registry-pull
+          containers:
+            - name: backup
+              image: {{ printf "%s/backup:%s" .Values.registry .Values.imageTag | quote }}
+              env:
+                - name: BUCKET
+                  value: {{ required "Set backups.bucket" .Values.backups.bucket | quote }}
+                - name: PGUSER
+                  valueFrom:
+                    secretKeyRef: {name: storage-credentials, key: POSTGRES_USER}
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef: {name: storage-credentials, key: POSTGRES_PASSWORD}
+              resources:
+                requests: {cpu: 50m, memory: 64Mi}
+                limits: {memory: 256Mi}
+{{- end }}

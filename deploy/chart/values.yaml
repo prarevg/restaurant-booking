@@ -1,0 +1,36 @@
+# cr.yandex/<registry-id>
+registry: ""
+imageTag: ""
+node: ""
+dataPath: /srv/restaurant-booking
+siteHost: preobart.ru
+apiHost: api.preobart.ru
+# Keep the application off while restoring the PostgreSQL dumps.
+applicationEnabled: false
+# Set after installing the TLS secret and switching Traefik to public mode.
+tlsSecret: ""
+tlsResolver: ""
+backups:
+  enabled: false
+  bucket: ""
+  schedule: '0 3 * * *'
+
+# LR8: requests measured on the cloud VM; HPA scales only CPU-heavy Auth.
+resources:
+  auth-service:
+    requests: {cpu: 100m, memory: 64Mi}
+    limits: {cpu: '1', memory: 128Mi}
+  catalog-service:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 500m, memory: 128Mi}
+  booking-service:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 500m, memory: 128Mi}
+  frontend:
+    requests: {cpu: 25m, memory: 32Mi}
+    limits: {cpu: 100m, memory: 64Mi}
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 60

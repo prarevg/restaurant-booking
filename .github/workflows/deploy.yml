@@ -1,8 +1,9 @@
-name: Deploy backend
+name: Check and deploy to K3s
 
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -13,10 +14,39 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Check Go services
+        working-directory: backend
+        run: |
+          go test ./...
+          go vet ./...
+      - name: Check frontend JavaScript
+        run: find frontend/public -name '*.js' -exec node --check {} \;
+      - uses: azure/setup-helm@v5
+        with:
+          version: v4.2.4
+      - name: Check deployment files
+        run: |
+          bash -n deploy/release.sh deploy/registry-login.sh
+          sh -n deploy/backup.sh
+          helm lint deploy/chart --set-string node=booking-vm \
+            --set applicationEnabled=true --set-string registry=cr.yandex/validation \
+            --set-string imageTag=validation --set-string tlsResolver=letsencrypt \
+            --set backups.enabled=true --set-string backups.bucket=validation
+
   deploy:
+    needs: check
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
       - name: Check deploy configuration
         env:
@@ -25,12 +55,11 @@ jobs:
           VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
           VM_FINGERPRINT: ${{ secrets.VM_FINGERPRINT }}
         run: |
-          : "${VM_HOST:?Set the VM_HOST repository variable}"
-          : "${VM_USER:?Set the VM_USER repository variable}"
-          : "${VM_SSH_KEY:?Set the VM_SSH_KEY repository secret}"
-          : "${VM_FINGERPRINT:?Set the VM_FINGERPRINT repository secret}"
-
-      - name: Deploy to Yandex Cloud VM
+          : "${VM_HOST:?Set VM_HOST}"
+          : "${VM_USER:?Set VM_USER}"
+          : "${VM_SSH_KEY:?Set VM_SSH_KEY}"
+          : "${VM_FINGERPRINT:?Set VM_FINGERPRINT}"
+      - name: Build images and deploy to K3s
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         env:
           DEPLOY_SHA: ${{ github.sha }}
@@ -40,18 +69,16 @@ jobs:
           key: ${{ secrets.VM_SSH_KEY }}
           fingerprint: ${{ secrets.VM_FINGERPRINT }}
           envs: DEPLOY_SHA
-          command_timeout: 25m
+          command_timeout: 30m
           script: |
             set -eu
             cd /opt/restaurant-booking
+            git diff --quiet
+            git diff --cached --quiet
             git fetch origin main
             if [ "$(git rev-parse FETCH_HEAD)" != "$DEPLOY_SHA" ]; then
-              printf 'Пропуск: коммит %s больше не является вершиной main.\n' "$DEPLOY_SHA"
+              echo 'Skipping a commit superseded by a newer main revision'
               exit 0
             fi
             git checkout --detach "$DEPLOY_SHA"
-            if [ ! -f backend/.env ]; then
-              install -m 600 .env backend/.env
-            fi
-            COMPOSE_PARALLEL_LIMIT=1 docker compose --env-file backend/.env -f backend/deploy/docker-compose.dev.yml up -d --build --wait --wait-timeout 300
-            printf '%s\n' "$DEPLOY_SHA" > .deployed-revision
+            sudo -n bash deploy/release.sh "$DEPLOY_SHA"

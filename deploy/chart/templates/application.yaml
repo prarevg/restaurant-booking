@@ -1,0 +1,106 @@
+{{- if .Values.applicationEnabled }}
+{{- $registry := required "Set registry to cr.yandex/<registry-id>" .Values.registry }}
+{{- $tag := required "Set imageTag to the published image tag" .Values.imageTag }}
+{{- range $name, $port := dict "auth-service" 8081 "catalog-service" 8082 "booking-service" 8083 "frontend" 80 }}
+{{- $frontend := eq $name "frontend" }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+spec:
+  selector:
+    app: {{ $name }}
+  ports:
+    - name: http
+      port: {{ $port }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+spec:
+  {{- if not (and (eq $name "auth-service") $.Values.autoscaling.enabled) }}
+  replicas: 1
+  {{- end }}
+  selector:
+    matchLabels:
+      app: {{ $name }}
+  template:
+    metadata:
+      labels:
+        app: {{ $name }}
+    spec:
+      imagePullSecrets:
+        - name: registry-pull
+      containers:
+        - name: {{ $name }}
+          image: {{ printf "%s/%s:%s" $registry $name $tag | quote }}
+          ports:
+            - name: http
+              containerPort: {{ $port }}
+          {{- if not $frontend }}
+          envFrom:
+            - secretRef:
+                name: {{ $name }}
+          env:
+            - name: {{ printf "%s_HTTP_ADDR" ($name | trimSuffix "-service" | upper) }}
+              value: {{ printf ":%d" $port | quote }}
+            {{- if eq $name "auth-service" }}
+            - name: JWT_EXPIRES
+              value: 24h
+            {{- else if eq $name "booking-service" }}
+            - name: CATALOG_SERVICE_URL
+              value: http://catalog-service:8082
+            {{- end }}
+          {{- end }}
+          readinessProbe:
+            httpGet:
+              port: http
+              path: {{ ternary "/" "/ready" $frontend }}
+            periodSeconds: 5
+          resources:
+            {{- index $.Values.resources $name | toYaml | nindent 12 }}
+{{- end }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: restaurant-booking
+spec:
+  entryPoints:
+    {{- if or .Values.tlsSecret .Values.tlsResolver }}
+    - websecure
+  tls:
+    {{- if .Values.tlsSecret }}
+    secretName: {{ .Values.tlsSecret | quote }}
+    {{- else }}
+    certResolver: {{ .Values.tlsResolver | quote }}
+    domains:
+      - main: {{ .Values.siteHost | quote }}
+        sans: [{{ .Values.apiHost | quote }}]
+    {{- end }}
+    {{- else }}
+    - web
+    {{- end }}
+  routes:
+    {{- $hosts := printf "(Host(`%s`) || Host(`%s`))" .Values.siteHost .Values.apiHost }}
+    {{- range $route := list
+      (dict "match" "(Path(`/api/auth`) || PathPrefix(`/api/auth/`) || PathPrefix(`/docs/auth/`))" "name" "auth-service" "port" 8081 "priority" 30)
+      (dict "match" "(PathRegexp(`^/api/(bookings|me/bookings)(/|$)`) || PathRegexp(`^/api/restaurants/[^/]+/tables/[^/]+/availability$`) || PathPrefix(`/docs/booking/`))" "name" "booking-service" "port" 8083 "priority" 30)
+      (dict "match" "(Path(`/api/restaurants`) || PathPrefix(`/api/restaurants/`) || PathPrefix(`/docs/catalog/`))" "name" "catalog-service" "port" 8082 "priority" 20)
+    }}
+    - kind: Rule
+      match: {{ printf "%s && %s" $hosts $route.match | quote }}
+      priority: {{ $route.priority }}
+      services:
+        - name: {{ $route.name }}
+          port: {{ $route.port }}
+    {{- end }}
+    - kind: Rule
+      match: {{ printf "Host(`%s`) && !PathPrefix(`/api/`)" .Values.siteHost | quote }}
+      priority: 10
+      services:
+        - name: frontend
+          port: 80
+{{- end }}
